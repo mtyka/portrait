@@ -1,0 +1,66 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<script type="text/javascript" src="static/js/processing.js"></script>
+<script type="text/javascript" src="static/js/jquery-1.11.1.min.js"></script>
+<script type="text/javascript">
+  var processing
+  var data
+  var image_x
+  function init() {
+    if (!processing) {
+      console.log("Init")
+      processing = Processing.getInstanceById('canvas');
+      load_img()
+      setInterval(function(){load_img()}, 20000);
+      canvas_x = window.innerWidth
+      canvas_y = window.innerHeight
+    }
+  }
+  function load_img() {
+    console.log("Loading Image")
+    var image = new Image();
+    image.src = 'http://localhost:5000/raw';
+    image.onload = function(){ 
+      img_canvas = document.getElementById('image')
+      img_canvas.width  = image.width 
+      img_canvas.height = image.height
+
+      img_context = img_canvas.getContext('2d')
+      img_context.drawImage(image, 0, 0);
+      data = document.getElementById('image').getContext('2d').getImageData(0, 0, image.width, image.height).data;
+      image_x = image.width
+      image_y = image.height
+      console.log([image_x, image_y, canvas_x, canvas_y])
+    }
+  }
+  get_pixel_color = function(x, y) {
+    //data = document.getElementById('image').getContext('2d').getImageData(x, y, 1, 1).data;
+    if(!data) {
+      return processing.color(127,127,127)
+    }
+    var scale_x = (image_x)/(canvas_x)
+    var scale_y = (image_y)/(canvas_y)
+    var scale = scale_x
+    if(scale_y > scale_x) scale = scale_y
+    x = Math.round(x*scale) 
+    y = Math.round(y*scale) 
+    if ((x<0)||(x>=image_x)||(y<0)||(y>=image_y)) { 
+      return processing.color(0,0,0) 
+    }
+    data_index = y*image_x*4+x*4
+    return processing.color(
+      data[data_index+0],
+      data[data_index+1],
+      data[data_index+2])
+    //return processing.color(data[0],data[1],data[2])
+  }
+</script>
+</head>
+<body> 
+<div id="container" style="position:absolute; top:0px; left:0px">
+<canvas id="canvas" data-processing-sources="static/canvas.pde" width="100%" height="100%"></canvas>
+<canvas id="image"></canvas>
+</div>
+</body>
+</html>
+

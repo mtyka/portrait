@@ -2,7 +2,7 @@ from flask import Flask, request, make_response,render_template
 import base64
 app = Flask(__name__)
 
-class RoundRobinStore():
+class RingBuffer():
   def __init__(self, size): 
     self.size = size 
     self.store = [None]*self.size
@@ -27,7 +27,7 @@ class RoundRobinStore():
       self.next_get = 0
     return data
 
-store = RoundRobinStore(10)
+store = RingBuffer(10)
 
 @app.route("/")
 def display_canvas():

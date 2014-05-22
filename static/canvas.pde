@@ -1,6 +1,6 @@
 float theta;   
 int loopcount=0;
-int N=2750;
+int N=1750;
 int[] x = new int[N];
 int[] y = new int[N];
 int w;
@@ -45,7 +45,7 @@ void draw() {
       abs(grey-brightness(get_color(x[i]-1,y[i]+1))); 
     dev = dev / 8;
     
-    boolean sharp = i%10 == 0;
+    boolean sharp = i%3  == 0;
     float stepsize;
     color stroke_c;
     if(sharp) {
@@ -61,7 +61,8 @@ void draw() {
       stepsize = grey/3;
       if(stepsize<3) stepsize = 3;
       if(stepsize>30) stepsize = 30;
-      stroke_c = color(red(pix)+random(130)-60, green(pix)+random(130)-60, blue(pix)+random(130)-60, 75-stepsize*2);
+      //stroke_c = color(red(pix)+random(130)-60, green(pix)+random(130)-60, blue(pix)+random(130)-60, 75-stepsize*2);
+      stroke_c = color(red(pix)+((i*2)%130)-60, green(pix)+((i*3)%130)-60, blue(pix)+((i*5)%130)-60, 75-stepsize*2);
     }
     
     stroke(stroke_c);  

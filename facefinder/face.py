@@ -11,11 +11,13 @@ import urllib
 import urllib2
 import base64
 import cv2.cv as cv
-import cv2
+import collections
 from optparse import OptionParser
 
-picurl = "http://localhost:5000"
-  
+std_w=600
+std_h=400
+
+
 def force_aspect(w, h, aspect):
   if w > h*aspect:
     w = h*aspect
@@ -71,14 +73,37 @@ class FaceExtractor():
 
       crop_img = crop_img_with_margin(img, x,y,w,h, self.image_scale, 3, 2)
       if not crop_img: continue
-
-      scale = 400.0/crop_img.height
-      std_w = crop_img.width*scale
-      std_h = crop_img.height*scale
+      print "Aspect: ", crop_img.width, crop_img.height, crop_img.width / crop_img.height
       std_img = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+      std_img2 = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
       cv.Resize(crop_img, std_img, cv.CV_INTER_LINEAR)
-      cv.ShowImage("result", std_img)
-      processor(std_img)
+      cv.Resize(crop_img, std_img2, cv.CV_INTER_LINEAR)
+      
+      smooth = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+      final = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+      laplacian = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+      
+      cv.Smooth(std_img, final, smoothtype=cv.CV_BILATERAL)
+      cv.Smooth(final, std_img, smoothtype=cv.CV_BILATERAL)
+      cv.Smooth(std_img, final, smoothtype=cv.CV_BILATERAL)
+      cv.Smooth(final, std_img, smoothtype=cv.CV_BILATERAL)
+
+      cv.Smooth(final, smooth, param1=5)
+      cv.Laplace(final, laplacian, 5) 
+
+      cv.AddWeighted(std_img, 3.0, smooth, -2.0, 0.0, final) 
+      cv.AddWeighted(std_img, 1.0, laplacian, -0.15, 0.0, final) 
+     
+      stacked = cv.CreateImage((std_w, std_h*2) , cv.IPL_DEPTH_8U, img.nChannels)
+      cv.SetImageROI( stacked, ( 0, 0, std_w, std_h) ) 
+      cv.Copy(final, stacked)
+      cv.ResetImageROI(stacked)
+      cv.SetImageROI( stacked, ( 0, std_h, std_w, std_h) ) 
+      cv.Copy(std_img2, stacked)
+      cv.ResetImageROI(stacked)
+
+      cv.ShowImage("result", stacked)
+      processor(final)
 
   def find_eyes(self, img):
     t = cv.GetTickCount()
@@ -90,17 +115,48 @@ class FaceExtractor():
       print "found", x,y,w,h
       cv.Rectangle(img, (int(x), int(y)), (int(x+w), int(y+h)), cv.RGB(255, 0, 0), 3, 8, 0)
 
+class Uploader():
+  def __init__(self, url):
+    self.url = url
+    self.buf = collections.deque() 
+    pass
 
-def UploadImage(img, url):
-  jpegdata = base64.b64encode(cv.EncodeImage(".jpeg", img).tostring())
-  params = {"img": jpegdata}
-  request = urllib2.Request(url,  urllib.urlencode(params))
-  request.add_header("Content-type", "application/x-www-form-urlencoded; charset=UTF-8")
-  try:
-    page = urllib2.urlopen(request)
-  except urllib2.URLError as e:
-    print "Error connecting to picture server: ", url
-    print e
+  def CheckImageDiff(self, img):
+    diff = cv.CreateImage((std_w, std_h), 8, 1) 
+    gray = cv.CreateImage((std_w, std_h), 8, 1)
+    cv.CvtColor(img, gray, cv.CV_BGR2GRAY );
+
+    lowest = None
+    for ref in self.buf:
+      if not ref: continue
+      cv.AbsDiff(ref, gray, diff);
+      absdiff = cv.Sum(diff);
+      if not lowest: lowest = absdiff
+      else: lowest = min(lowest, absdiff)
+    threshold = 3.0
+    if lowest:
+      print "Lowest diff: ", lowest[0]*1.0/std_w/std_h
+    if not lowest or lowest[0] > threshold*std_h*std_w:
+      self.buf.append(gray)
+      if len(self.buf) > 40:
+        self.buf.popleft()
+      return True
+    return False
+
+  def UploadImage(self, img):
+#    if not self.CheckImageDiff(img):
+#      print "REJECT"
+#      return
+
+    jpegdata = base64.b64encode(cv.EncodeImage(".jpeg", img).tostring())
+    params = {"img": jpegdata}
+    request = urllib2.Request(self.url,  urllib.urlencode(params))
+    request.add_header("Content-type", "application/x-www-form-urlencoded; charset=UTF-8")
+    try:
+      page = urllib2.urlopen(request)
+    except urllib2.URLError as e:
+      print "Error connecting to picture server: ", self.url
+      print e
 
 
 if __name__ == '__main__':
@@ -109,14 +165,23 @@ if __name__ == '__main__':
   parser.add_option("-f", "--face", action="store", dest="face", type="str", help="Haar cascade file for faces")
   parser.add_option("-e", "--eye", action="store", dest="eye", type="str", help="Haar cascade file for eyes")
   parser.add_option("-c", "--camera", action="store", dest="camera", type="int", help="Camera index", default=0)
+  parser.add_option("-u", "--url", action="store", dest="url", type="str", help="URL for uploader", default="http://localhost:5000")
+  parser.add_option("", "--jpeg", action="store", dest="jpeg", type="str", help="Manual file upload") 
   (options, args) = parser.parse_args()
+  
+  uploader = Uploader(options.url)
+
+  if options.jpeg:
+    img = cv.LoadImage(options.jpeg)
+    uploader.UploadImage(img) 
+    sys.exit(0) 
+  
   face_cascade = cv.Load(options.face)
   eye_cascade = cv.Load(options.eye)
   faceex = FaceExtractor(face_cascade, eye_cascade)
   
-  input_name = '0' 
   capture = cv.CreateCameraCapture(int(options.camera))
-   
+ 
   while True:
      frame = cv.QueryFrame(capture)
      if not frame:
@@ -124,9 +189,7 @@ if __name__ == '__main__':
      frame_copy = cv.CreateImage((frame.width,frame.height), cv.IPL_DEPTH_8U, frame.nChannels)
      cv.Copy(frame, frame_copy)
 
-     faceex.find_faces(frame, lambda img: UploadImage(img, picurl))
-     if cv.WaitKey(5000) == 27:
+     faceex.find_faces(frame, uploader.UploadImage)
+     if cv.WaitKey(100) == 27:
        break
     
-
- 

@@ -1,6 +1,6 @@
 float theta;   
 int loopcount=0;
-int N=1750;
+int N=2500;
 int[] x = new int[N];
 int[] y = new int[N];
 int w;

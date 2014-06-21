@@ -6,10 +6,11 @@ The program finds faces in a camera image or video stream and displays a red box
 Original C implementation by:  ?
 Python implementation by: Roman Stanchak, James Bowman
 """
+import base64
 import sys
+import time
 import urllib
 import urllib2
-import base64
 import cv2.cv as cv
 import collections
 from optparse import OptionParser
@@ -52,7 +53,7 @@ class FaceExtractor():
     self.face_cascade = face_cascade
     self.eye_cascade = eye_cascade
     self.aspect = 1
-
+    self.enhance = True 
 
   def find_faces(self, img, processor): 
     # allocate temporary images
@@ -78,22 +79,25 @@ class FaceExtractor():
       std_img2 = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
       cv.Resize(crop_img, std_img, cv.CV_INTER_LINEAR)
       cv.Resize(crop_img, std_img2, cv.CV_INTER_LINEAR)
-      
-      smooth = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+    
       final = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
-      laplacian = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
-      
-      cv.Smooth(std_img, final, smoothtype=cv.CV_BILATERAL)
-      cv.Smooth(final, std_img, smoothtype=cv.CV_BILATERAL)
-      cv.Smooth(std_img, final, smoothtype=cv.CV_BILATERAL)
-      cv.Smooth(final, std_img, smoothtype=cv.CV_BILATERAL)
+      if self.enhance:
+        smooth = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+        laplacian = cv.CreateImage((std_w, std_h) , cv.IPL_DEPTH_8U, img.nChannels)
+        
+        cv.Smooth(std_img, final, smoothtype=cv.CV_BILATERAL, param1=0, param3=10, param4=10)
+        cv.Smooth(final, std_img, smoothtype=cv.CV_BILATERAL, param1=0, param3=10, param4=10)
 
-      cv.Smooth(final, smooth, param1=5)
-      cv.Laplace(final, laplacian, 5) 
+        cv.Smooth(std_img, smooth, param1=5)
+        cv.Laplace(std_img, laplacian, 3) 
 
-      cv.AddWeighted(std_img, 3.0, smooth, -2.0, 0.0, final) 
-      cv.AddWeighted(std_img, 1.0, laplacian, -0.15, 0.0, final) 
-     
+        #cv.AddWeighted(std_img, 1.0, smooth,  0.0, 0.0, final) 
+        cv.AddWeighted(std_img, 1.8, smooth, -0.8, 0.0, final) 
+        cv.AddWeighted(final, 1.8, smooth, -0.8, 0.0, std_img) 
+        cv.AddWeighted(std_img, 1.0, laplacian, -0.25, 0.0, final) 
+      else:
+        cv.Copy(std_img, final)
+
       stacked = cv.CreateImage((std_w, std_h*2) , cv.IPL_DEPTH_8U, img.nChannels)
       cv.SetImageROI( stacked, ( 0, 0, std_w, std_h) ) 
       cv.Copy(final, stacked)
@@ -103,7 +107,7 @@ class FaceExtractor():
       cv.ResetImageROI(stacked)
 
       cv.ShowImage("result", stacked)
-      processor(final)
+      processor(final, (x,y,w,h))
 
   def find_eyes(self, img):
     t = cv.GetTickCount()
@@ -115,10 +119,12 @@ class FaceExtractor():
       print "found", x,y,w,h
       cv.Rectangle(img, (int(x), int(y)), (int(x+w), int(y+h)), cv.RGB(255, 0, 0), 3, 8, 0)
 
+
 class Uploader():
   def __init__(self, url):
     self.url = url
-    self.buf = collections.deque() 
+    self.buf = collections.deque()
+    self.capmap = collections.deque()
     pass
 
   def CheckImageDiff(self, img):
@@ -143,11 +149,63 @@ class Uploader():
       return True
     return False
 
-  def UploadImage(self, img):
-#    if not self.CheckImageDiff(img):
-#      print "REJECT"
-#      return
+  def overlap(self, r1, r2):
+    (x, y, w, h) = r1
+    (cx,cy,cw,ch) = r2
+ 
+    ## Compare sizes
+    ratio_limit = 2.5
+    ratio = (1.0+w+h)/(cw+ch)
+    if ratio < 1.0: ratio = 1/ratio;
+    print ratio
+    if ratio > ratio_limit: return False
 
+    ## Compare overlap
+    bx = max(x,cx)
+    by = max(y,cy)
+    b2x = min(x+w,cx+cw)
+    b2y = min(y+h,cy+ch)
+
+    if bx > b2x: return False
+    if by > b2y: return False
+
+    oarea = (b2x-bx)*(b2y-by)
+    area1 = w*h
+    area2 = cw*ch
+    if oarea > area1 or oarea > area2:
+      print "WRONG!!!", area1, area2, oarea
+
+    if oarea*1.0/area1 > 0.60 or oarea*1.0/area2 > 0.6:
+      return True
+    return False
+
+  def CheckCapMap(self, img, crop):
+    curtime = time.time()
+    expiry = 10.0
+    dellist = []
+    for i, (_, t) in enumerate(self.capmap):
+      if (curtime - t) > expiry:
+        dellist.append(i)
+    for i in dellist:
+      del self.capmap[i]
+
+    for crop, t in self.capmap:
+      print crop, curtime-t
+
+    for crop2, _ in self.capmap:
+      if self.overlap(crop, crop2):
+        return False
+    self.capmap.append((crop, curtime))
+
+    return True
+
+
+  def UploadImage(self, img, crop):
+    print "Testing image"
+    if not self.CheckCapMap(img, crop):
+      print "REJECT"
+      return
+    print "ACCEPT"
     jpegdata = base64.b64encode(cv.EncodeImage(".jpeg", img).tostring())
     params = {"img": jpegdata}
     request = urllib2.Request(self.url,  urllib.urlencode(params))
@@ -190,6 +248,6 @@ if __name__ == '__main__':
      cv.Copy(frame, frame_copy)
 
      faceex.find_faces(frame, uploader.UploadImage)
-     if cv.WaitKey(100) == 27:
+     if cv.WaitKey(1000) == 27:
        break
     
